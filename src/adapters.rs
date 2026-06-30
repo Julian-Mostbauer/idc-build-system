@@ -68,30 +68,46 @@ pub async fn run_context_command(
                 let target_bin = if executables.len() == 1 {
                     executables[0].clone()
                 } else {
-                    let dir_name = project_root
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    let matched = executables.iter().find(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|n| n == dir_name)
-                            .unwrap_or(false)
-                    });
+                    let project_name = get_cmake_project_name(&build_dir);
+                    let matched = if let Some(ref name) = project_name {
+                        executables.iter().find(|p| {
+                            p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n == name)
+                                .unwrap_or(false)
+                        })
+                    } else {
+                        None
+                    };
+
                     if let Some(bin) = matched {
                         bin.clone()
                     } else {
-                        let items: Vec<String> = executables
-                            .iter()
-                            .map(|p| p.strip_prefix(project_root).unwrap_or(p).display().to_string())
-                            .collect();
-                        println!("\nMultiple compiled binaries found:");
-                        let selection = dialoguer::Select::new()
-                            .with_prompt("Please choose which binary to run")
-                            .items(&items)
-                            .default(0)
-                            .interact()?;
-                        executables[selection].clone()
+                        let dir_name = project_root
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("");
+                        let matched_dir = executables.iter().find(|p| {
+                            p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n == dir_name)
+                                .unwrap_or(false)
+                        });
+                        if let Some(bin) = matched_dir {
+                            bin.clone()
+                        } else {
+                            let items: Vec<String> = executables
+                                .iter()
+                                .map(|p| p.strip_prefix(project_root).unwrap_or(p).display().to_string())
+                                .collect();
+                            println!("\nMultiple compiled binaries found:");
+                            let selection = dialoguer::Select::new()
+                                .with_prompt("Please choose which binary to run")
+                                .items(&items)
+                                .default(0)
+                                .interact()?;
+                            executables[selection].clone()
+                        }
                     }
                 };
 
@@ -335,4 +351,21 @@ fn find_deno_entrypoint(root: &Path) -> String {
         }
     }
     "main.ts".to_string()
+}
+
+fn get_cmake_project_name(build_dir: &Path) -> Option<String> {
+    let cache_path = build_dir.join("CMakeCache.txt");
+    if let Ok(content) = std::fs::read_to_string(cache_path) {
+        for line in content.lines() {
+            if line.starts_with("CMAKE_PROJECT_NAME:") {
+                if let Some(pos) = line.find('=') {
+                    let val = line[pos + 1..].trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }

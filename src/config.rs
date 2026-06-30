@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use std::collections::HashMap;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IdcConfig {
     pub default_context: Option<String>,
+    #[serde(default)]
+    pub commands: HashMap<String, String>,
 }
 
 impl IdcConfig {
