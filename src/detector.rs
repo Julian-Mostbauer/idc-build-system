@@ -8,6 +8,9 @@ pub enum BuildContext {
     Python,
     Java,
     Dotnet,
+    CMake,
+    Makefile,
+    Deno,
 }
 
 impl BuildContext {
@@ -19,6 +22,9 @@ impl BuildContext {
             BuildContext::Python => "python",
             BuildContext::Java => "java",
             BuildContext::Dotnet => "dotnet",
+            BuildContext::CMake => "cmake",
+            BuildContext::Makefile => "makefile",
+            BuildContext::Deno => "deno",
         }
     }
 
@@ -30,6 +36,9 @@ impl BuildContext {
             "python" => Some(BuildContext::Python),
             "java" => Some(BuildContext::Java),
             "dotnet" => Some(BuildContext::Dotnet),
+            "cmake" => Some(BuildContext::CMake),
+            "makefile" => Some(BuildContext::Makefile),
+            "deno" => Some(BuildContext::Deno),
             _ => None,
         }
     }
@@ -40,8 +49,11 @@ impl BuildContext {
             BuildContext::Go => "go",
             BuildContext::Node => "node",
             BuildContext::Python => "python",
-            BuildContext::Java => "javac", // standard compiler check
+            BuildContext::Java => "javac",
             BuildContext::Dotnet => "dotnet",
+            BuildContext::CMake => "cmake",
+            BuildContext::Makefile => "make",
+            BuildContext::Deno => "deno",
         }
     }
 }
@@ -104,6 +116,19 @@ fn scan_directory(path: &Path) -> Vec<BuildContext> {
                 }
             }
         }
+    }
+
+    if path.join("CMakeLists.txt").exists() {
+        contexts.push(BuildContext::CMake);
+    }
+    if path.join("Makefile").exists()
+        || path.join("makefile").exists()
+        || path.join("GNUmakefile").exists()
+    {
+        contexts.push(BuildContext::Makefile);
+    }
+    if path.join("deno.json").exists() || path.join("deno.jsonc").exists() {
+        contexts.push(BuildContext::Deno);
     }
 
     contexts

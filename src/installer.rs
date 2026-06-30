@@ -63,6 +63,28 @@ fn get_installer_details(context: &BuildContext) -> (String, String) {
             "dotnet-install script".to_string(),
             "curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin".to_string(),
         ),
+        BuildContext::CMake => {
+            if cfg!(target_os = "macos") {
+                ("Homebrew".to_string(), "brew install cmake".to_string())
+            } else if which::which("apt-get").is_ok() {
+                ("apt".to_string(), "sudo apt-get update && sudo apt-get install -y cmake".to_string())
+            } else {
+                ("CMake Website".to_string(), "echo 'Please visit https://cmake.org/download/ to install CMake'".to_string())
+            }
+        }
+        BuildContext::Makefile => {
+            if cfg!(target_os = "macos") {
+                ("Homebrew / Xcode Command Line Tools".to_string(), "brew install make || xcode-select --install".to_string())
+            } else if which::which("apt-get").is_ok() {
+                ("apt".to_string(), "sudo apt-get update && sudo apt-get install -y build-essential".to_string())
+            } else {
+                ("GNU Make".to_string(), "echo 'Please install GNU Make using your system package manager'".to_string())
+            }
+        }
+        BuildContext::Deno => (
+            "Deno official installer".to_string(),
+            "curl -fsSL https://deno.land/install.sh | sh".to_string(),
+        ),
     }
 }
 

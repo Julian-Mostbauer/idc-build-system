@@ -8,6 +8,107 @@ pub async fn run_context_command(
     project_root: &Path,
     args: &[String],
 ) -> anyhow::Result<()> {
+    if *context == BuildContext::CMake {
+        match command_verb {
+            "build" => {
+                let build_dir = project_root.join("build");
+                if !build_dir.exists() {
+                    println!("Build directory 'build/' missing. Configuring with cmake -B build...");
+                    let configure_status = Command::new("cmake")
+                        .current_dir(project_root)
+                        .args(&["-B", "build"])
+                        .status()?;
+                    if !configure_status.success() {
+                        anyhow::bail!("CMake configuration failed.");
+                    }
+                }
+                let mut full_args = vec!["--build".to_string(), "build".to_string()];
+                full_args.extend(args.iter().cloned());
+                println!("Executing: cmake {}", full_args.join(" "));
+                let build_status = Command::new("cmake")
+                    .current_dir(project_root)
+                    .args(&full_args)
+                    .status()?;
+                if !build_status.success() {
+                    anyhow::bail!("CMake build failed.");
+                }
+                return Ok(());
+            }
+            "test" => {
+                let mut full_args = vec!["--test-dir".to_string(), "build".to_string()];
+                full_args.extend(args.iter().cloned());
+                println!("Executing: ctest {}", full_args.join(" "));
+                let test_status = Command::new("ctest")
+                    .current_dir(project_root)
+                    .args(&full_args)
+                    .status()?;
+                if !test_status.success() {
+                    anyhow::bail!("ctest failed.");
+                }
+                return Ok(());
+            }
+            "run" => {
+                // Ensure built
+                let build_status = Command::new("cmake")
+                    .current_dir(project_root)
+                    .args(&["--build", "build"])
+                    .status()?;
+                if !build_status.success() {
+                    anyhow::bail!("CMake build failed.");
+                }
+
+                let build_dir = project_root.join("build");
+                let mut executables = Vec::new();
+                scan_for_executables(&build_dir, &mut executables)?;
+
+                if executables.is_empty() {
+                    anyhow::bail!("No compiled executables found in build/ directory.");
+                }
+
+                let target_bin = if executables.len() == 1 {
+                    executables[0].clone()
+                } else {
+                    let dir_name = project_root
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("");
+                    let matched = executables.iter().find(|p| {
+                        p.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|n| n == dir_name)
+                            .unwrap_or(false)
+                    });
+                    if let Some(bin) = matched {
+                        bin.clone()
+                    } else {
+                        let items: Vec<String> = executables
+                            .iter()
+                            .map(|p| p.strip_prefix(project_root).unwrap_or(p).display().to_string())
+                            .collect();
+                        println!("\nMultiple compiled binaries found:");
+                        let selection = dialoguer::Select::new()
+                            .with_prompt("Please choose which binary to run")
+                            .items(&items)
+                            .default(0)
+                            .interact()?;
+                        executables[selection].clone()
+                    }
+                };
+
+                println!("Executing: {}", target_bin.display());
+                let run_status = Command::new(&target_bin)
+                    .current_dir(project_root)
+                    .args(args)
+                    .status()?;
+                if !run_status.success() {
+                    anyhow::bail!("Binary exited with failure: {:?}", run_status.code());
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     let (exe, base_args) = resolve_command(context, command_verb, project_root);
 
     let mut full_args = base_args;
@@ -24,6 +125,41 @@ pub async fn run_context_command(
         anyhow::bail!("Command failed with exit code: {:?}", status.code());
     }
 
+    Ok(())
+}
+
+fn scan_for_executables(dir: &Path, list: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "CMakeFiles" || name == "_deps" || name.starts_with('.') {
+                continue;
+            }
+            scan_for_executables(&path, list)?;
+        } else if path.is_file() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = path.metadata() {
+                    if metadata.permissions().mode() & 0o111 != 0 {
+                        list.push(path);
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if ext == "exe" {
+                        list.push(path);
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -123,6 +259,37 @@ fn resolve_command(
             "test" => ("dotnet".to_string(), vec!["test".to_string()]),
             _ => ("dotnet".to_string(), vec![verb.to_string()]),
         },
+        BuildContext::CMake => {
+            // Already handled customly in run_context_command, but resolved for safety
+            ("cmake".to_string(), vec![])
+        }
+        BuildContext::Makefile => match verb {
+            "build" => ("make".to_string(), vec![]),
+            "run" => ("make".to_string(), vec!["run".to_string()]),
+            "test" => ("make".to_string(), vec!["test".to_string()]),
+            _ => ("make".to_string(), vec![verb.to_string()]),
+        },
+        BuildContext::Deno => match verb {
+            "build" => {
+                if deno_has_task(root, "build") {
+                    ("deno".to_string(), vec!["task".to_string(), "build".to_string()])
+                } else {
+                    ("echo".to_string(), vec!["No Deno build task defined".to_string()])
+                }
+            }
+            "run" => {
+                if deno_has_task(root, "start") {
+                    ("deno".to_string(), vec!["task".to_string(), "start".to_string()])
+                } else if deno_has_task(root, "run") {
+                    ("deno".to_string(), vec!["task".to_string(), "run".to_string()])
+                } else {
+                    let entrypoint = find_deno_entrypoint(root);
+                    ("deno".to_string(), vec!["run".to_string(), "--allow-all".to_string(), entrypoint])
+                }
+            }
+            "test" => ("deno".to_string(), vec!["test".to_string(), "--allow-all".to_string()]),
+            _ => ("deno".to_string(), vec![verb.to_string()]),
+        },
     }
 }
 
@@ -144,7 +311,28 @@ fn find_python_main(root: &Path) -> String {
     } else if root.join("app.py").exists() {
         "app.py".to_string()
     } else {
-        // Fallback to searching first python file, or just return main.py
         "main.py".to_string()
     }
+}
+
+fn deno_has_task(root: &Path, task_name: &str) -> bool {
+    let check_file = |p: std::path::PathBuf| -> Option<bool> {
+        let content = std::fs::read_to_string(p).ok()?;
+        let val: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+        let tasks = val.get("tasks")?;
+        tasks.get(task_name).map(|_| true)
+    };
+    check_file(root.join("deno.json"))
+        .or_else(|| check_file(root.join("deno.jsonc")))
+        .unwrap_or(false)
+}
+
+fn find_deno_entrypoint(root: &Path) -> String {
+    let candidates = ["main.ts", "main.js", "index.ts", "index.js", "mod.ts"];
+    for c in &candidates {
+        if root.join(c).exists() {
+            return c.to_string();
+        }
+    }
+    "main.ts".to_string()
 }
