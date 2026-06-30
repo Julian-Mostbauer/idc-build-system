@@ -8,7 +8,7 @@ use detector::BuildContext;
 
 
 #[derive(Parser, Debug)]
-#[command(name = "idc", about = "Instant Developer Companion - Unified Build CLI")]
+#[command(name = "idc", about = "I Don't Care - Unified Build CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
