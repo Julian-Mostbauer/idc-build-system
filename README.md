@@ -1,4 +1,4 @@
-# idc (Instant Development Companion)
+# **I**nstant **D**evelopment **C**ompanion (I don't care build system)
 
 idc is a zero-friction, unified developer command companion written in Rust. It eliminates the need to manually install toolchains, manage runtimes, or remember different build tool syntax when context-switching between projects.
 
