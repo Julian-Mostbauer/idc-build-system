@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'openspec/**'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and Upload Assets
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: idc
+            asset_name: idc-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: idc
+            asset_name: idc-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: idc.exe
+            asset_name: idc-windows-x86_64.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Compile release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename and prepare asset
+        shell: bash
+        run: |
+          mv target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./${{ matrix.asset_name }}
+
+      - name: Upload asset to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          prerelease: true
+          files: ${{ matrix.asset_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
