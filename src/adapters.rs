@@ -234,14 +234,19 @@ fn resolve_command(
                     _ => ("poetry".to_string(), vec!["run".to_string(), verb.to_string()]),
                 }
             } else {
+                let python_exe = if which::which("python").is_ok() {
+                    "python".to_string()
+                } else {
+                    "python3".to_string()
+                };
                 match verb {
-                    "build" => ("python".to_string(), vec!["-m".to_string(), "build".to_string()]),
+                    "build" => (python_exe.clone(), vec!["-m".to_string(), "build".to_string()]),
                     "run" => {
                         let main_file = find_python_main(root);
-                        ("python".to_string(), vec![main_file])
+                        (python_exe.clone(), vec![main_file])
                     }
                     "test" => ("pytest".to_string(), vec![]),
-                    _ => ("python".to_string(), vec![verb.to_string()]),
+                    _ => (python_exe.clone(), vec![verb.to_string()]),
                 }
             }
         }

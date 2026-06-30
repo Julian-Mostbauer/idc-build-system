@@ -3,8 +3,14 @@ use dialoguer::Confirm;
 use std::process::{Command, Stdio};
 
 pub fn check_toolchain(context: &BuildContext) -> bool {
-    let binary = context.required_binary();
-    which::which(binary).is_ok()
+    if *context == BuildContext::Python {
+        which::which("python").is_ok()
+            || which::which("python3").is_ok()
+            || which::which("uv").is_ok()
+    } else {
+        let binary = context.required_binary();
+        which::which(binary).is_ok()
+    }
 }
 
 pub fn prompt_and_install(context: &BuildContext) -> anyhow::Result<bool> {
