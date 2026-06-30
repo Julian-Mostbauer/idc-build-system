@@ -35,6 +35,16 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    #[command(about = "Format the codebase")]
+    Fmt {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(about = "Clean build artifacts")]
+    Clean {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -89,6 +99,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Build { args } => ("build", args),
         Commands::Run { args } => ("run", args),
         Commands::Test { args } => ("test", args),
+        Commands::Fmt { args } => ("fmt", args),
+        Commands::Clean { args } => ("clean", args),
         Commands::Completion { .. } => unreachable!(),
     };
 

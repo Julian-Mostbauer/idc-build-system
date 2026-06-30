@@ -34,6 +34,12 @@ idc run
 
 # Runs unit and integration test suites
 idc test
+
+# Formats source code across all matching files
+idc fmt
+
+# Cleans build artifacts and intermediate caches
+idc clean
 ```
 
 Any extra parameters are automatically passed through:

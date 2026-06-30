@@ -121,8 +121,83 @@ pub async fn run_context_command(
                 }
                 return Ok(());
             }
+            "clean" => {
+                let mut full_args = vec!["--build".to_string(), "build".to_string(), "--target".to_string(), "clean".to_string()];
+                full_args.extend(args.iter().cloned());
+                println!("Executing: cmake {}", full_args.join(" "));
+                let clean_status = Command::new("cmake")
+                    .current_dir(project_root)
+                    .args(&full_args)
+                    .status()?;
+                if !clean_status.success() {
+                    anyhow::bail!("CMake clean failed.");
+                }
+                return Ok(());
+            }
+            "fmt" => {
+                if which::which("clang-format").is_ok() {
+                    println!("Formatting CMake source files using clang-format...");
+                    let mut files = Vec::new();
+                    find_cpp_files(project_root, &mut files)?;
+                    if !files.is_empty() {
+                        let mut format_args = vec!["-i".to_string()];
+                        format_args.extend(files.iter().map(|p| p.to_string_lossy().to_string()));
+                        let status = Command::new("clang-format")
+                            .current_dir(project_root)
+                            .args(&format_args)
+                            .status()?;
+                        if !status.success() {
+                            anyhow::bail!("clang-format failed.");
+                        }
+                    } else {
+                        println!("No C++ source files (.cpp, .h, .cc, .cxx, .hpp) found to format.");
+                    }
+                    return Ok(());
+                } else {
+                    println!("⚠️ Warning: 'clang-format' is not installed or not in PATH.");
+                    return Ok(());
+                }
+            }
             _ => {}
         }
+    }
+
+    if *context == BuildContext::Node && command_verb == "clean" {
+        if node_has_script(project_root, "clean") {
+            let mgr = detect_js_package_manager(project_root);
+            let mut full_args = vec!["run".to_string(), "clean".to_string()];
+            full_args.extend(args.iter().cloned());
+            println!("Executing: {} {}", mgr, full_args.join(" "));
+            let status = Command::new(&mgr)
+                .current_dir(project_root)
+                .args(&full_args)
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("Node clean script failed.");
+            }
+        } else {
+            println!("No custom 'clean' script found in package.json. Deleting standard build folders...");
+            let targets = ["dist", "build", "out", ".next"];
+            for t in &targets {
+                let dir = project_root.join(t);
+                if dir.exists() {
+                    println!("Removing directory: {}", dir.display());
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if *context == BuildContext::Python && command_verb == "clean" {
+        println!("Cleaning Python cache and build files...");
+        let mut dirs_to_delete = Vec::new();
+        find_python_cache_dirs(project_root, &mut dirs_to_delete)?;
+        for dir in dirs_to_delete {
+            println!("Removing directory: {}", dir.display());
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        return Ok(());
     }
 
     let (exe, base_args) = resolve_command(context, command_verb, project_root);
@@ -190,6 +265,8 @@ fn resolve_command(
                 "build" => "build",
                 "run" => "run",
                 "test" => "test",
+                "fmt" => "fmt",
+                "clean" => "clean",
                 _ => verb,
             };
             ("cargo".to_string(), vec![cmd.to_string()])
@@ -198,6 +275,8 @@ fn resolve_command(
             "build" => ("go".to_string(), vec!["build".to_string()]),
             "run" => ("go".to_string(), vec!["run".to_string(), ".".to_string()]),
             "test" => ("go".to_string(), vec!["test".to_string(), "./...".to_string()]),
+            "fmt" => ("go".to_string(), vec!["fmt".to_string(), "./...".to_string()]),
+            "clean" => ("go".to_string(), vec!["clean".to_string(), "-i".to_string(), "-cache".to_string()]),
             _ => ("go".to_string(), vec![verb.to_string()]),
         },
         BuildContext::Node => {
@@ -206,6 +285,15 @@ fn resolve_command(
                 "build" => (mgr, vec!["run".to_string(), "build".to_string()]),
                 "run" => (mgr, vec!["start".to_string()]),
                 "test" => (mgr, vec!["test".to_string()]),
+                "fmt" => {
+                    if node_has_script(root, "format") {
+                        (mgr, vec!["run".to_string(), "format".to_string()])
+                    } else if node_has_script(root, "fmt") {
+                        (mgr, vec!["run".to_string(), "fmt".to_string()])
+                    } else {
+                        ("npx".to_string(), vec!["prettier".to_string(), "--write".to_string(), ".".to_string()])
+                    }
+                }
                 _ => (mgr, vec![verb.to_string()]),
             }
         }
@@ -221,6 +309,13 @@ fn resolve_command(
                         ("uv".to_string(), vec!["run".to_string(), "python".to_string(), main_file])
                     }
                     "test" => ("uv".to_string(), vec!["run".to_string(), "pytest".to_string()]),
+                    "fmt" => {
+                        let fmt_tool = if which::which("ruff").is_ok() { "ruff" } else { "black" };
+                        let cmd_args = if fmt_tool == "ruff" { vec!["format".to_string(), ".".to_string()] } else { vec![".".to_string()] };
+                        let mut full = vec!["run".to_string(), fmt_tool.to_string()];
+                        full.extend(cmd_args);
+                        ("uv".to_string(), full)
+                    }
                     _ => ("uv".to_string(), vec!["run".to_string(), verb.to_string()]),
                 }
             } else if has_poetry {
@@ -231,6 +326,13 @@ fn resolve_command(
                         ("poetry".to_string(), vec!["run".to_string(), "python".to_string(), main_file])
                     }
                     "test" => ("poetry".to_string(), vec!["run".to_string(), "pytest".to_string()]),
+                    "fmt" => {
+                        let fmt_tool = if which::which("ruff").is_ok() { "ruff" } else { "black" };
+                        let cmd_args = if fmt_tool == "ruff" { vec!["format".to_string(), ".".to_string()] } else { vec![".".to_string()] };
+                        let mut full = vec!["run".to_string(), fmt_tool.to_string()];
+                        full.extend(cmd_args);
+                        ("poetry".to_string(), full)
+                    }
                     _ => ("poetry".to_string(), vec!["run".to_string(), verb.to_string()]),
                 }
             } else {
@@ -246,6 +348,11 @@ fn resolve_command(
                         (python_exe.clone(), vec![main_file])
                     }
                     "test" => ("pytest".to_string(), vec![]),
+                    "fmt" => {
+                        let fmt_tool = if which::which("ruff").is_ok() { "ruff" } else { "black" };
+                        let cmd_args = if fmt_tool == "ruff" { vec!["format".to_string(), ".".to_string()] } else { vec![".".to_string()] };
+                        (fmt_tool.to_string(), cmd_args)
+                    }
                     _ => (python_exe.clone(), vec![verb.to_string()]),
                 }
             }
@@ -263,6 +370,8 @@ fn resolve_command(
                     "build" => (gradlew, vec!["build".to_string()]),
                     "run" => (gradlew, vec!["run".to_string()]),
                     "test" => (gradlew, vec!["test".to_string()]),
+                    "fmt" => (gradlew, vec!["format".to_string()]),
+                    "clean" => (gradlew, vec!["clean".to_string()]),
                     _ => (gradlew, vec![verb.to_string()]),
                 }
             } else {
@@ -270,6 +379,8 @@ fn resolve_command(
                     "build" => ("mvn".to_string(), vec!["package".to_string()]),
                     "run" => ("mvn".to_string(), vec!["exec:java".to_string()]),
                     "test" => ("mvn".to_string(), vec!["test".to_string()]),
+                    "fmt" => ("mvn".to_string(), vec!["spotless:apply".to_string()]),
+                    "clean" => ("mvn".to_string(), vec!["clean".to_string()]),
                     _ => ("mvn".to_string(), vec![verb.to_string()]),
                 }
             }
@@ -278,16 +389,19 @@ fn resolve_command(
             "build" => ("dotnet".to_string(), vec!["build".to_string()]),
             "run" => ("dotnet".to_string(), vec!["run".to_string()]),
             "test" => ("dotnet".to_string(), vec!["test".to_string()]),
+            "fmt" => ("dotnet".to_string(), vec!["format".to_string()]),
+            "clean" => ("dotnet".to_string(), vec!["clean".to_string()]),
             _ => ("dotnet".to_string(), vec![verb.to_string()]),
         },
         BuildContext::CMake => {
-            // Already handled customly in run_context_command, but resolved for safety
             ("cmake".to_string(), vec![])
         }
         BuildContext::Makefile => match verb {
             "build" => ("make".to_string(), vec![]),
             "run" => ("make".to_string(), vec!["run".to_string()]),
             "test" => ("make".to_string(), vec!["test".to_string()]),
+            "fmt" => ("make".to_string(), vec!["fmt".to_string()]),
+            "clean" => ("make".to_string(), vec!["clean".to_string()]),
             _ => ("make".to_string(), vec![verb.to_string()]),
         },
         BuildContext::Deno => match verb {
@@ -309,6 +423,14 @@ fn resolve_command(
                 }
             }
             "test" => ("deno".to_string(), vec!["test".to_string(), "--allow-all".to_string()]),
+            "fmt" => ("deno".to_string(), vec!["fmt".to_string()]),
+            "clean" => {
+                if deno_has_task(root, "clean") {
+                    ("deno".to_string(), vec!["task".to_string(), "clean".to_string()])
+                } else {
+                    ("echo".to_string(), vec!["No custom clean task defined in Deno project".to_string()])
+                }
+            }
             _ => ("deno".to_string(), vec![verb.to_string()]),
         },
     }
@@ -373,4 +495,57 @@ fn get_cmake_project_name(build_dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn node_has_script(root: &Path, script_name: &str) -> bool {
+    let pkg_path = root.join("package.json");
+    if let Ok(content) = std::fs::read_to_string(pkg_path) {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(scripts) = val.get("scripts") {
+                return scripts.get(script_name).is_some();
+            }
+        }
+    }
+    false
+}
+
+fn find_python_cache_dirs(dir: &Path, list: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "__pycache__" || name == ".pytest_cache" || name == ".ruff_cache" || name == "build" || name == "dist" || name.ends_with(".egg-info") {
+                list.push(path);
+            } else if !name.starts_with('.') {
+                find_python_cache_dirs(&path, list)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_cpp_files(dir: &Path, list: &mut Vec<std::path::PathBuf>) -> anyhow::Result<()> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "build" || name == "CMakeFiles" || name == "_deps" || name.starts_with('.') {
+                continue;
+            }
+            find_cpp_files(&path, list)?;
+        } else if path.is_file() {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if ext == "cpp" || ext == "h" || ext == "cc" || ext == "cxx" || ext == "hpp" {
+                    list.push(path);
+                }
+            }
+        }
+    }
+    Ok(())
 }
